@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gateway Experience</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @keyframes hz4 { 0%, 100% { opacity: 0.15; transform: scale(1.0); } 50% { opacity: 0.55; transform: scale(1.04); } }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; background: #03020c; font-family: 'Sora', sans-serif; color: #f1f5f9; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+        .liquid-rim { position: relative; }
+        .liquid-rim::before {
+            content: ""; position: absolute; inset: 0; padding: 1.2px; border-radius: inherit;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.13) 22%, transparent 45%, transparent 55%, rgba(255, 255, 255, 0.13) 78%, rgba(255, 255, 255, 0.42) 100%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect, useCallback } = React;
+
+        // Simple helper component to render Lucide Icons in static html
+        function Icon({ name, size = 16, color = "currentColor", fill = "none", style = {} }) {
+            useEffect(() => { lucide.createIcons(); }, [name, color, fill]);
+            return <i data-lucide={name} style={{ width: size, height: size, stroke: color, fill: fill, display: 'inline-block', ...style }}></i>;
+        }
+
+        const ACCENT  = "#22d3ee";
+        const ACCENT2 = "#818cf8";
+        const GRAD    = "linear-gradient(135deg, #22d3ee 0%, #818cf8 100%)";
+        const TOTAL   = 30 * 60;
+
+        const STAGES = [
+          { id:"box",     name:"The Box",    duration:8*60, color:"#818cf8", glow:"rgba(129,140,248,0.45)", icon:"◻", label:"Clear the field",      instruction:"Visualize a heavy, sealed box. Place every thought, every worry from today inside it. Lock it shut." },
+          { id:"saber",   name:"The Saber",  duration:8*60, color:"#22d3ee", glow:"rgba(34,211,238,0.45)",  icon:"⟁", label:"Build your energy",     instruction:"A point of light expands into a glowing saber. Feel it rotate around your body, shifting electric blue to radiant green." },
+          { id:"pattern", name:"Patterning", duration:8*60, color:"#fbbf24", glow:"rgba(251,191,36,0.45)",  icon:"◎", label:"Project your intent",   instruction:"See yourself right now achieving exactly what you want. Flood the scene with full emotion. Then release it completely." },
+          { id:"float",   name:"Free Float", duration:6*60, color:"#a78bfa", glow:"rgba(167,139,250,0.45)", icon:"∿", label:"Surrender to the field", instruction:"Release all control. Drift inside the 4Hz. Let the synchronization do its work." },
+        ];
+
+        const BREATH_CYCLE = 16;
+        const BREATH_PHASES = [
+          { name:"Inhale",  start:0,  end:4,  color:ACCENT,   targetScale:1.55 },
+          { name:"Hold",    start:4,  end:8,  color:"#fbbf24", targetScale:1.55 },
+          { name:"Exhale",  start:8,  end:14, color:ACCENT2,   targetScale:1.0  },
+          { name:"Hold",    start:14, end:16, color:"#475569", targetScale:1.0  },
+        ];
+        const BREATH_DURATION = 2 * 60;
+
+        function getBreathPhase(sec) {
+          const t = sec % BREATH_CYCLE;
+          const phase = BREATH_PHASES.find(p => t >= p.start && t < p.end) || BREATH_PHASES[0];
+          const localT = (t - phase.start) / (phase.end - phase.start);
+          const prev = BREATH_PHASES[(BREATH_PHASES.indexOf(phase) - 1 + 4) % 4];
+          const scale = prev.targetScale + (phase.targetScale - prev.targetScale) * easeInOut(localT);
+          return { phase, scale, localT };
+        }
+
+        function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+        function getStageIndex(e) {
+          let acc = 0;
+          for (let i = 0; i < STAGES.length; i++) { acc += STAGES[i].duration; if (e < acc) return i; }
+          return STAGES.length - 1;
+        }
+
+        function getStageElapsed(e) {
+          let acc = 0;
+          for (let i = 0; i < STAGES.length; i++) {
+            if (e < acc + STAGES[i].duration) return e - acc;
+            acc += STAGES[i].duration;
+          }
+          return STAGES[STAGES.length-1].duration;
+        }
+
+        const fmt = (s) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+        const toRGBA = (hex, a) => { const h=hex.replace("#",""); return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`; };
+
+        /* ── CANVAS DRAW FUNCTIONS ── */
+        function drawBg(ctx, t, W, H) {
+          ctx.fillStyle = "#03020c"; ctx.fillRect(0,0,W,H);
+          for (let i=0; i<90; i++) {
+            const s=i*997.31, x=((Math.sin(s*0.1)*0.5+0.5))*W, y=((Math.sin(s*0.23)*0.5+0.5))*H;
+            const tw=0.1+0.2*Math.sin(t*1.3+s), sz=0.4+0.5*((i%3)/3);
+            ctx.beginPath(); ctx.arc(x,y,sz,0,Math.PI*2); ctx.fillStyle=`rgba(255,255,255,${tw})`; ctx.fill();
+          }
+        }
+        function drawBox(ctx,t,W,H) {
+          const cx=W/2,cy=H/2,S=Math.min(W,H)*0.2,ay=t*0.38,ax=0.32;
+          const proj=(x,y,z)=>{let rx=x*Math.cos(ay)+z*Math.sin(ay),rz=-x*Math.sin(ay)+z*Math.cos(ay),ry=y*Math.cos(ax)-rz*Math.sin(ax);return[cx+rx*S,cy+ry*S];};
+          const v=[proj(-1,-1,-1),proj(1,-1,-1),proj(1,1,-1),proj(-1,1,-1),proj(-1,-1,1),proj(1,-1,1),proj(1,1,1),proj(-1,1,1)];
+          const edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+          const pulse=0.55+0.45*Math.sin(t*4*Math.PI*2);
+          ctx.save(); ctx.shadowColor="#818cf8"; ctx.shadowBlur=18*pulse;
+          ctx.strokeStyle=`rgba(129,140,248,${0.55+0.35*pulse})`; ctx.lineWidth=1.5;
+          edges.forEach(([a,b])=>{ctx.beginPath();ctx.moveTo(v[a][0],v[a][1]);ctx.lineTo(v[b][0],v[b][1]);ctx.stroke();});
+          ctx.restore();
+        }
+        function drawSaber(ctx,t,W,H) {
+          const cx=W/2,cy=H/2,orbitR=Math.min(W,H)*0.08,ang=t*0.7,sx=cx+orbitR*Math.sin(ang),sy=cy-orbitR*Math.cos(ang)*0.4,sH=Math.min(W,H)*0.28;
+          const cp=(Math.sin(t*0.4)+1)/2,cr=Math.round(34*(1-cp)+10*cp),cg=Math.round(211*(1-cp)+180*cp),cb=Math.round(238*(1-cp)+80*cp),sc=`rgb(${cr},${cg},${cb})`;
+          for(let i=0;i<4;i++){const ph=((t*4+i*0.25)%1),rr=ph*Math.min(W,H)*0.38;ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);ctx.strokeStyle=`rgba(${cr},${cg},${cb},${(1-ph)*0.22})`;ctx.lineWidth=1.2;ctx.stroke();}
+          ctx.save();ctx.shadowColor=sc;ctx.shadowBlur=22;ctx.beginPath();ctx.ellipse(sx,sy,2.5,sH/2,0,0,Math.PI*2);ctx.fillStyle="rgba(255,255,255,0.92)";ctx.fill();ctx.restore();
+        }
+        function drawPatterning(ctx,t,W,H) {
+          const cx=W/2,cy=H/2,maxR=Math.min(W,H)*0.42;
+          for(let i=0;i<5;i++){const ph=((t*0.45+i*0.2)%1),rr=ph*maxR;ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);ctx.strokeStyle=`rgba(251,191,36,${(1-ph)*0.45})`;ctx.lineWidth=1.8;ctx.stroke();}
+          const cp=0.55+0.45*Math.sin(t*4*Math.PI*2);ctx.save();ctx.shadowColor="#fbbf24";ctx.shadowBlur=28*cp;ctx.beginPath();ctx.arc(cx,cy,7*cp,0,Math.PI*2);ctx.fillStyle=`rgba(251,191,36,${0.85*cp})`;ctx.fill();ctx.restore();
+        }
+        function drawFloat(ctx,t,W,H) {
+          for(let i=0;i<60;i++){const s=i*137.5,bx=(Math.sin(s*0.1+0.3)*0.5+0.5),by=(Math.sin(s*0.23+0.7)*0.5+0.5),x=bx*W,y=by*H,tw=0.1+0.3*Math.sin(t*0.6+s*0.5);ctx.beginPath();ctx.arc(x,y,1,0,Math.PI*2);ctx.fillStyle=`rgba(255,255,255,${tw})`; ctx.fill();}
+        }
+
+        /* ── GLASS BUTTON ── */
+        function GlassButton({children,onClick,color=ACCENT,variant="ghost",disabled,style}) {
+          const bg=variant==="primary"?`linear-gradient(135deg,${toRGBA(color,0.22)} 0%,${toRGBA(color,0.08)} 100%)`:"linear-gradient(135deg,rgba(255,255,255,0.07) 0%,rgba(255,255,255,0.02) 100%)";
+          return(
+            <button onClick={onClick} disabled={disabled} className="liquid-rim"
+              style={{padding:"11px 22px",fontSize:13,fontWeight:600,background:bg,border:`1px solid ${variant==="primary"?toRGBA(color,0.4):"rgba(255,255,255,0.12)"}`,color:variant==="primary"?color:"#e2e8f0",borderRadius:16,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,backdropFilter:"blur(20px)",boxShadow:"0 4px 16px rgba(0,0,0,0.25)",whiteSpace:"nowrap",...style}}>
+              {children}
+            </button>
+          );
+        }
+
+        /* ── APP BODY ── */
+        function GatewayApp() {
+          const [phase, setPhase] = useState("idle");
+          const [elapsed, setElapsed] = useState(0);
+          const [breathSec, setBreathSec] = useState(0);
+          const [volume, setVolume] = useState(0.2);
+          const [muted, setMuted] = useState(false);
+
+          const canvasRef = useRef(null);
+          const audioRef = useRef(null);
+          const timerRef = useRef(null);
+          const breathRef = useRef(null);
+          const startRef = useRef(null);
+
+          useEffect(()=>{
+            const canvas=canvasRef.current; if(!canvas)return;
+            let id;
+            const loop=(ts)=>{
+              const t=ts/1000,W=canvas.width,H=canvas.height,ctx=canvas.getContext("2d");
+              drawBg(ctx,t,W,H);
+              if(phase==="active"||phase==="paused"||phase==="done"){
+                const si=getStageIndex(elapsed);
+                if(si===0)drawBox(ctx,t,W,H); else if(si===1)drawSaber(ctx,t,W,H);
+                else if(si===2)drawPatterning(ctx,t,W,H); else drawFloat(ctx,t,W,H);
+              } else { drawSaber(ctx,t*0.4,W,H); }
+              id=requestAnimationFrame(loop);
+            };
+            id=requestAnimationFrame(loop);
+            return()=>cancelAnimationFrame(id);
+          },[phase,elapsed]);
+
+          const createAudio = useCallback((vol)=>{
+            try{
+              const ctx=new(window.AudioContext||window.webkitAudioContext)();
+              const gain=ctx.createGain(); gain.gain.value=0;
+              const oscL=ctx.createOscillator(),oscR=ctx.createOscillator();
+              oscL.type="sine";oscL.frequency.value=170;oscR.type="sine";oscR.frequency.value=174;
+              const pL=ctx.createStereoPanner(),pR=ctx.createStereoPanner();
+              pL.pan.value=-1;pR.pan.value=1;
+              oscL.connect(pL);pL.connect(gain);oscR.connect(pR);pR.connect(gain);gain.connect(ctx.destination);
+              oscL.start();oscR.start(); gain.gain.setValueAtTime(0,ctx.currentTime); gain.gain.linearRampToValueAtTime(vol,ctx.currentTime+2.5);
+              audioRef.current={
+                ctx,gain,
+                pause:()=>{gain.gain.setValueAtTime(gain.gain.value,ctx.currentTime);gain.gain.linearRampToValueAtTime(0,ctx.currentTime+0.5);},
+                resume:(v)=>{ctx.resume();gain.gain.setValueAtTime(gain.gain.value,ctx.currentTime);gain.gain.linearRampToValueAtTime(v||0.2,ctx.currentTime+1);},
+                setVol:(v)=>{gain.gain.setValueAtTime(gain.gain.value,ctx.currentTime);gain.gain.linearRampToValueAtTime(v,ctx.currentTime+0.3);},
+                stop:()=>{gain.gain.linearRampToValueAtTime(0,ctx.currentTime+1);setTimeout(()=>{try{oscL.stop();oscR.stop();ctx.close();}catch(e){}},1200);},
+              };
+            }catch(e){}
+          },[]);
+
+          const startBreathwork = () => {
+            setBreathSec(0); setPhase("breath");
+            breathRef.current=setInterval(()=>{
+              setBreathSec(s=>{
+                if(s>=BREATH_DURATION-1){clearInterval(breathRef.current);launchSession();return 0;}
+                return s+1;
+              });
+            },1000);
+          };
+
+          const launchSession = () => {
+            createAudio(volume); setPhase("active"); startRef.current=Date.now()-elapsed*1000;
+            timerRef.current=setInterval(()=>{
+              const e=Math.floor((Date.now()-startRef.current)/1000); setElapsed(e);
+              if(e>=TOTAL){clearInterval(timerRef.current);audioRef.current?.stop();setPhase("done");}
+            },400);
+          };
+
+          const resetSession = () => {
+            clearInterval(timerRef.current);clearInterval(breathRef.current);
+            audioRef.current?.stop();audioRef.current=null; setPhase("idle");setElapsed(0);setBreathSec(0);
+          };
+
+          const stageIdx = getStageIndex(elapsed);
+          const stage = STAGES[stageIdx];
+          const timeLeft = Math.max(0,TOTAL-elapsed);
+          const totalPct = elapsed/TOTAL;
+          const { phase:bp, scale:breathScale } = getBreathPhase(breathSec);
+
+          return (
+            <div className="min-h-screen w-full flex flex-col items-center justify-start relative px-4 py-8">
+              <div style={{position:"fixed",inset:0,pointerEvents:"none",background:`radial-gradient(ellipse 60% 45% at 50% -5%,rgba(34,211,238,0.08) 0%,transparent 55%)`}}/>
+              <canvas ref={canvasRef} width={600} height={600} style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:"min(600px,100vw)",height:"min(600px,100vw)",opacity:phase==="active"?0.9:0.4,pointerEvents:"none"}}/>
+
+              {phase==="idle" && (
+                <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:520,animation:"fadeUp 0.6s ease"}} className="flex flex-col items-center mt-6">
+                  <div style={{width:54,height:54,borderRadius:15,background:GRAD}} className="flex items-center justify-center shadow-lg mb-4">
+                    <Icon name="brain" size={25} color="#fff"/>
+                  </div>
+                  <h1 style={{background:GRAD,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}} className="text-4xl font-extrabold tracking-tight mb-1">GATEWAY</h1>
+                  <p className="text-xs text-slate-500 font-medium tracking-widest uppercase mb-8">Hemispheric Synchronization · 30 min</p>
+
+                  <div className="w-full flex flex-col gap-2 mb-6">
+                    {STAGES.map((s)=>(
+                      <div key={s.id} className="liquid-rim flex items-center gap-4 p-4 bg-white/3 border border-white/7 rounded-xl backdrop-blur-md">
+                        <div style={{background:toRGBA(s.color,0.14),border:`1px solid ${toRGBA(s.color,0.28)}`}} className="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-lg text-amber-400" style={{color:s.color}}>{s.icon}</div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-slate-100">{s.name}</p>
+                          <p className="text-xs text-slate-500">{s.label}</p>
+                        </div>
+                        <span className="text-xs text-slate-600 font-medium">{s.duration/60} min</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="liquid-rim w-full p-4 bg-white/4 border border-white/7 rounded-xl backdrop-blur-md mb-8">
+                    <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs text-slate-400 flex items-center gap-1"><Icon name="volume-2" size={13}/> Volume</span>
+                        <span className="text-xs font-semibold text-cyan-400">20% Recommended</span>
+                    </div>
+                    <div className="relative h-1 bg-white/10 rounded-full">
+                        <div style={{width:`${(volume/0.4)*100}%`,background:GRAD}} className="h-full rounded-full"/>
+                        <input type="range" min={2} max={40} value={Math.round(volume*100)} onChange={e=>setVolume(Number(e.target.value)/100)} className="absolute inset-0 opacity-0 w-full cursor-pointer"/>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-4 w-full">
+                    <GlassButton variant="primary" color={ACCENT} onClick={startBreathwork} style={{borderRadius:999,padding:"14px 40px"}}>
+                      <Icon name="wind" size={17}/> Breathwork + Session
+                    </GlassButton>
+                    <GlassButton onClick={()=>{setElapsed(0);launchSession();}} style={{borderRadius:999}}>
+                      <Icon name="skip-forward" size={13}/> Skip breathwork
+                    </GlassButton>
+                  </div>
+                </div>
+              )}
+
+              {phase==="breath" && (
+                <div style={{position:"relative",zIndex:1,maxWidth:420}} className="w-full flex flex-col items-center gap-8 text-center mt-12 animate-[fadeUp_0.5s_ease]">
+                  <div>
+                    <h2 className="text-2xl font-extrabold mb-1">Box Breathing</h2>
+                    <p className="text-xs text-slate-500 px-4">Activate the vagus nerve · lower cortisol · prepare for Focus 10</p>
+                  </div>
+                  <div style={{position:"relative",width:200,height:200}} className="flex items-center justify-center">
+                    <div style={{position:"absolute",inset:0,borderRadius:"50%",background:`radial-gradient(circle,${toRGBA(bp.color,0.06)} 0%,transparent 70%)`,transform:`scale(${breathScale*1.3})`}}/>
+                    <div style={{position:"absolute",inset:0,borderRadius:"50%",border:`2px solid ${toRGBA(bp.color,0.4)}`,transform:`scale(${breathScale})`,boxShadow:`0 0 20px ${toRGBA(bp.color,0.3)}`}}/>
+                    <div style={{width:80,height:80,borderRadius:"50%",background:`radial-gradient(circle,${toRGBA(bp.color,0.25)},transparent)`,border:`1px solid ${toRGBA(bp.color,0.4)}`}} className="flex items-center justify-center font-bold text-sm" style={{color:bp.color}}>{bp.name}</div>
+                  </div>
+                  <div>
+                    <p className="text-4xl font-black text-slate-100">{fmt(BREATH_DURATION-breathSec)}</p>
+                    <p className="text-[10px] text-slate-500 tracking-widest font-bold">REMAINING</p>
+                  </div>
+                  <GlassButton onClick={()=>{clearInterval(breathRef.current); launchSession();}} style={{borderRadius:999}}>
+                    <Icon name="skip-forward" size={13}/> Skip to session
+                  </GlassButton>
+                </div>
+              )}
+
+              {(phase==="active"||phase==="paused") && (
+                <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:520}} className="flex flex-col items-center justify-between flex-1 mt-2">
+                  <div className="w-full flex justify-between items-center">
+                    <span className="text-xs text-slate-500 font-bold tracking-wider flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"/> LIVE · 170Hz / 174Hz</span>
+                    <GlassButton variant="primary" color="#f87171" onClick={resetSession} style={{padding:"6px 12px",borderRadius:12}}><Icon name="rotate-ccw" size={12}/> Reset</GlassButton>
+                  </div>
+                  <div className="flex flex-col items-center justify-center flex-1 w-full gap-8 py-12">
+                    <div style={{position:"relative",width:240,height:240}} className="flex flex-col items-center justify-center bg-white/4 backdrop-blur-sm border border-white/10 rounded-full shadow-2xl">
+                      <span className="text-5xl font-black tracking-tighter" style={{textShadow:`0 0 20px ${stage.color}`}}>{fmt(timeLeft)}</span>
+                      <span className="text-[10px] font-bold tracking-widest uppercase mt-1" style={{color:stage.color}}>{stage.name}</span>
+                    </div>
+                    <div className="liquid-rim w-full max-w-sm p-4 bg-white/4 border rounded-2xl text-center" style={{borderColor:toRGBA(stage.color,0.2)}}>
+                      <p className="text-xs text-slate-400 leading-relaxed">{stage.instruction}</p>
+                    </div>
+                    <div className="w-full max-w-sm">
+                      <div className="flex justify-between text-[10px] text-slate-500 font-bold mb-1"><span>PROGRESS</span><span>{Math.round(totalPct*100)}%</span></div>
+                      <div className="h-1 bg-white/10 rounded-full overflow-hidden"><div style={{width:`${totalPct*100}%`,background:GRAD}} className="h-full rounded-full"/></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = tragedies = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<GatewayApp />);
+    </script>
+</body>
+</html>
